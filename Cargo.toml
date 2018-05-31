@@ -1,0 +1,6 @@
+[package]
+name = "galois_2p8"
+version = "0.1.0"
+authors = ["Daniel Sweet <danieljsweet@icloud.com>"]
+
+[dependencies]
