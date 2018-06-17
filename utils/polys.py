@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# polys.py: a utility script for the development of the galois2p8 Crate.
+# polys.py: a utility script for the development of the galois_2p8 Crate.
 # Copyright 2018 Daniel Sweet. See the COPYRIGHT file at the top-level
 # directory of this distribution.
 

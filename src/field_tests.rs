@@ -1,4 +1,4 @@
-// field_tests.rs: part of the test suite of the galois2p8 Crate.
+// field_tests.rs: part of the test suite of the galois_2p8 Crate.
 // Copyright 2018 Daniel Sweet. See the COPYRIGHT file at the top-level
 // directory of this distribution.
 
