@@ -1,8 +1,38 @@
 // field.rs: part of the galois2p8 crate.
 // Copyright 2018 Daniel Sweet. See the COPYRIGHT file at the top-level
-// directory of this project.
+// directory of this distribution.
+
+//! Implements arithmetic operations over all `GF(2^8)` extensions.
+//!
+//! Galois (finite) fields are defined in one variable modulo some
+//! prime number, or over algebraic extensions, where the members
+//! are polynomials with coefficients in the one-variable field modulo
+//! some irreducable polynomial.
+//!
+//! An irreducable polynomial is analogous to a prime number: it cannot
+//! be factored as the product of two or more polynomials. Performing
+//! polynomial arithmetic modulo an irreducable polynomial of degree `n`
+//! ensures that all `2^(n-1)` values from `0` to `2^(n-1) - 1` are represented
+//! within the extended field.
+//!
+//! Algebraic extensions to Galois fields can be expressed as operations
+//! modulo several potential irreducable polynomials, except for the special
+//! case of `GF(2^2)`, which can only be represented in terms of one
+//! irreducable polynomial. This crate implements field arithmetic modulo
+//! all possible irreducable polynomials capable of generating `GF(2^8)`.
 use std::ptr;
 
+/// Represents an irreducable polynomial of `GF(2^8)`.
+///
+/// Each polynomial is named according to the nonzero positions of
+/// the coefficients. Each digit after the `Poly` prefix corresponds to
+/// the exponent of the variable for which a nonzero coefficient is
+/// present. Recall that in `GF(2^x)`, the only possible coefficients are
+/// either `0` or `1`.
+///
+/// For example, [`Poly84310`] represents `x^8 + x^4 + x^3 + x + 1`.
+///
+/// [`Poly84310`]: #variant.Poly84310
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum IrreducablePolynomial {
     Poly84310   = 0x1b,
@@ -37,6 +67,10 @@ pub enum IrreducablePolynomial {
     Poly8765430 = 0xf9,
 }
 
+/// Contains all possible irreducable polynomials for `GF(2^8)`.
+///
+/// This array is exposed primarily for testing purposes, but may be used
+/// to enumerate all possible values in the order of their declaration.
 pub const POLYNOMIALS: [IrreducablePolynomial; 30] = [
     IrreducablePolynomial::Poly84310,
     IrreducablePolynomial::Poly84320,
@@ -70,6 +104,38 @@ pub const POLYNOMIALS: [IrreducablePolynomial; 30] = [
     IrreducablePolynomial::Poly8765430,
 ];
 
+/// Contains the primitive polynomials of `GF(2^8)`.
+///
+/// In `GF(2^x)` wherein arithmetic operations are performed modulo a
+/// polynomial, the polynomial is said to be primitive if for some alpha,
+/// each nonzero member value of the field can be uniquely represented by
+/// `alpha ^ p` for `p < 2^x`, where alpha is a root of the polynomial. That
+/// is, for some root of the polynomial, every member of the field can
+/// be represented as the exponentiation of said root.
+///
+/// In `GF(2^x)`, the only nontrivial prime root of any given
+/// [`IrreducablePolynomial`] is two. We say "is primitive" as a shorthand
+/// for meaning that the [`IrreducablePolynomial`] is primitive assuming
+/// a root of two.
+///
+/// The use of primitive polynomials confers an immediate performance
+/// benefit for single values: we can represent multiplication and
+/// division as addition and subtraction within logarithms and exponents.
+/// Additionally, some usages of Galois fields, e.g. Reed-Solomon syndrome
+/// coding, require primitive polynomials to function properly.
+///
+/// This table is used by the [`is_primitive`] method. Specifically,
+///
+/// ```rust
+/// # use galois_2p8::field::{IrreducablePolynomial, PRIMITIVES};
+/// # let poly = IrreducablePolynomial::Poly84320;
+/// # assert_eq!(
+/// PRIMITIVES.binary_search(&poly).is_ok() == poly.is_primitive()
+/// # , true);
+/// ```
+///
+/// [`IrreducablePolynomial`]: enum.IrreducablePolynomial.html
+/// [`is_primitive`]: enum.IrreducablePolynomial.html#method.is_primitive
 pub const PRIMITIVES: [IrreducablePolynomial; 16] = [
     IrreducablePolynomial::Poly84320,
     IrreducablePolynomial::Poly85310,
@@ -90,10 +156,54 @@ pub const PRIMITIVES: [IrreducablePolynomial; 16] = [
 ];
 
 impl IrreducablePolynomial {
+    /// Converts the [`IrreducablePolynomial`] to its binary representation.
+    ///
+    /// In `GF(2^x)`, coefficients in the extension polynomial may only take
+    /// values of `0` or `1`. As a result, there is a natural mapping of values
+    /// in `GF(2^x)` to bits. `0b1011` maps to `x^3 + x^1 + 1`, for example.
+    /// The greatest degree that can be encoded by an eight-bit byte is
+    /// 7, as a consequence of the least significant bit being treated as
+    /// `x^0 == 1`. In order to represent a degree 8 polynomial, there must be
+    /// at least 9 bits available, so it can be encoded as a 16-bit value.
+    ///
+    /// [`IrreducablePolynomial`]: enum.IrreducablePolynomial.html
     pub fn to_u16(&self) -> u16 {
         0x100 + ((*self) as u16)
     }
 
+    /// Determines whether the [`IrreducablePolynomial`] is a primitive polynomial.
+    ///
+    /// In `GF(2^x)` wherein arithmetic operations are performed modulo a
+    /// polynomial, the polynomial is said to be primitive if for some alpha,
+    /// each nonzero member value of the field can be uniquely represented by
+    /// `alpha ^ p` for `p < 2^x`, where alpha is a root of the polynomial. That
+    /// is, for some root of the polynomial, every member of the field can
+    /// be represented as the exponentiation of said root.
+    ///
+    /// In `GF(2^x)`, the only nontrivial prime root of any given
+    /// [`IrreducablePolynomial`] is two. We say "is primitive" as a shorthand
+    /// for meaning that the [`IrreducablePolynomial`] is primitive assuming
+    /// a root of two.
+    ///
+    /// The use of primitive polynomials confers an immediate performance
+    /// benefit for single values: we can represent multiplication and
+    /// division as addition and subtraction within logarithms and exponents.
+    /// Additionally, some usages of Galois fields, e.g. Reed-Solomon syndrome
+    /// coding, require primitive polynomials to function properly.
+    ///
+    /// This method consults the [`PRIMITIVES`] table to determine if the
+    /// [`IrreducablePolynomial`] is actually primitive. That is to say,
+    ///
+    /// ```rust
+    /// # use galois_2p8::field::{IrreducablePolynomial, PRIMITIVES};
+    /// # let poly = IrreducablePolynomial::Poly84320;
+    /// # assert_eq!(
+    /// poly.is_primitive() == PRIMITIVES.binary_search(&poly).is_ok()
+    /// # , true);
+    /// ```
+    ///
+    /// [`IrreducablePolynomial`]: enum.IrreducablePolynomial.html
+    /// [`PRIMITIVES`]: constant.PRIMITIVES.html
     pub fn is_primitive(&self) -> bool {
         match PRIMITIVES.binary_search(self) {
             Ok(_) => true,
@@ -102,13 +212,73 @@ impl IrreducablePolynomial {
     }
 }
 
+/// Establishes `GF(2^8)` arithmetic for scalar and vector operands.
+///
+/// In all instances of `GF(2^8)`, over every possible [`IrreducablePolynomial`],
+/// addition and subtraction is defined as XOR, as in `GF(2)`. Addition and
+/// subtraction are accordingly provided as default implementations of
+/// this trait.
+///
+/// Multiplication and division are more complicated, and the optimal strategy
+/// for implementing them in a scalar context depends on whether the
+/// [`IrreducablePolynomial`] over which the field is implemented is a primitive
+/// polynomial.
+///
+/// Recall that if a `p: IrreducablePolynomial` is primitive, then all members of
+/// the field in which operations are performed modulo `p` can be represented
+/// as `2^n` for `n in [0..255]`, with the exception of `0`.
+///
+/// In these cases, we can represent multiplication and division as
+/// addition and subtraction within logarithmic representations of the operands.
+/// This requires fewer instructions to implement at the scalar level.
+/// Note that this cannot be done for an [`IrreducablePolynomial`] that is not
+/// also primitive. As a consequence, we provide two concrete implementations
+/// of this trait: [`GeneralField`] and [`PrimitivePolynomialField`], where the
+/// slightly faster logarithm arithmetic is only used in the latter.
+///
+/// This trait also exposes operations over vectors containing `GF(2^8)`
+/// members.
+///
+/// Common operations over `GF(2^8)` operands can exploit long-word vector
+/// operations as implemented by the target hardware. A trivial example
+/// is the addition and subtraction of vectors: this is a simple bitwise
+/// XOR across a very long word. This already functions as expected
+/// in Rust 1.25 as a consequence of LLVM optimizations. A less trivial
+/// example involves multiplication and division: vector processors require
+/// a specialized long-word lookup function to implement these operations.
+///
+/// The `x86_64` architecture mandates SSE4.2 and earlier, as is found in the
+/// earlier `x86` architecture; in SSE3, an intrinsic `_mm_shuffle_epi8` was
+/// added that allows the entries of a vector register `a` to function as
+/// indices of the vector register `b` in the lower four bits, effectively
+/// implementing an accelerated 16-entry table lookup. This intrinsic (and the
+/// AVX2 32-byte extension `_mm256_shuffle_epi8`) is not yet used, but will be
+/// used when Rust gains stable SIMD intrinsic APIs.
+///
+/// [`IrreducablePolynomial`]: enum.IrreducablePolynomial.html
+/// [`GeneralField`]: struct.GeneralField.html
+/// [`PrimitivePolynomialField`]: struct.PrimitivePolynomialField.html
 pub trait Field {
+    /// Returns the polynomial modulo which all operations are performed.
     fn polynomial(&self) -> IrreducablePolynomial;
+
+    /// Returns the result of `src * scale` in this field.
     fn mult(&self, src: u8, scale: u8) -> u8;
+
+    /// Returns the result of `src / scale` in this field.
+    ///
+    /// Implementations of this method are expected to panic if the `scale`
+    /// argument is zero. The contents of the resulting error message are
+    /// not defined.
     fn div(&self, src: u8, scale: u8) -> u8;
+
+    /// Returns the result of `2^x` in this field.
     fn two_pow(&self, x: u8) -> u8;
+
+    /// Returns the result of `scale * 2^x` in this field.
     fn mult_two_pow(&self, scale: u8, x: u8) -> u8;
 
+    /// Adds `scale * src[0..len]` into `dst[0..len]` in place.
     unsafe fn add_ptr_scaled_len(
         &self,
         dst: *mut u8,
@@ -117,6 +287,7 @@ pub trait Field {
         len: usize
     );
 
+    /// Multiplies `dst[0..len]` by `scale` in place.
     unsafe fn mult_ptr_len(
         &self,
         dst: *mut u8,
@@ -124,6 +295,11 @@ pub trait Field {
         len: usize
     );
 
+    /// Divides `dst[0..len]` by `scale` in place.
+    ///
+    /// Implementations of this method are expected to panic if the `scale`
+    /// argument is zero. The contents of the resulting error message are
+    /// not defined.
     unsafe fn div_ptr_len(
         &self,
         dst: *mut u8,
@@ -133,10 +309,12 @@ pub trait Field {
 
     // Basic arithmetic
 
+    /// Adds `left` and `right`, returning their sum.
     fn add(&self, left: u8, right: u8) -> u8 {
         left ^ right
     }
 
+    /// Subtracts `right` from `left`, returning the difference.
     fn sub(&self, left: u8, right: u8) -> u8 {
         left ^ right
     }
@@ -144,6 +322,7 @@ pub trait Field {
     // Multiword operations. These will eventually take advantage of SIMD
     // intrinsics, when those become stable.
 
+    /// Adds `src[0..len]` into `dst[0..len]`.
     unsafe fn add_ptr_len(
         &self,
         dst: *mut u8,
@@ -157,6 +336,10 @@ pub trait Field {
         }
     }
 
+    /// Adds `src` into `dst` in place, over the smallest common length.
+    ///
+    /// The length used in operation is set to the minimum of `src.len()` and
+    /// `dst.len()`.
     fn add_multiword(
         &self,
         dst: &mut [u8],
@@ -167,6 +350,10 @@ pub trait Field {
         self.add_multiword_len(dst, src, slen.min(dlen));
     }
 
+    /// Adds `src[0..len]` into `dst[0..len]`.
+    ///
+    /// This method will panic if `src.len()` or `dst.len()` is less than
+    /// the supplied `len` parameter.
     fn add_multiword_len(
         &self,
         dst: &mut [u8],
@@ -180,6 +367,10 @@ pub trait Field {
         }
     }
 
+    /// Adds `src * scale` into `dst` in place, over the smallest common length.
+    ///
+    /// The length used in the operation is set to the minimum of `src.len()` and
+    /// `dst.len()`.
     fn add_scaled_multiword(
         &self,
         dst: &mut [u8],
@@ -191,6 +382,10 @@ pub trait Field {
         self.add_scaled_multiword_len(dst, src, scale, slen.min(dlen));
     }
 
+    /// Adds `src[0..len] * scale` into `dst[0..len]`.
+    ///
+    /// This method will panic if `src.len()` or `dst.len()` is less than
+    /// the supplied `len` parameter.
     fn add_scaled_multiword_len(
         &self,
         dst: &mut [u8],
@@ -205,6 +400,7 @@ pub trait Field {
         }
     }
 
+    /// Subtracts `src[0..len]` from `dst[0..len]` in place.
     unsafe fn sub_ptr_len(
         &self,
         dst: *mut u8,
@@ -214,6 +410,7 @@ pub trait Field {
         self.add_ptr_len(dst, src, len);
     }
 
+    /// Subracts `scale * src[0..len]` from `dst[0..len]` in place.
     unsafe fn sub_ptr_scaled_len(
         &self,
         dst: *mut u8,
@@ -224,6 +421,10 @@ pub trait Field {
         self.add_ptr_scaled_len(dst, src, scale, len);
     }
 
+    /// Subtracts `src` from `dst` in place, over the smallest common length.
+    ///
+    /// The length used in the operation is set to the minimum of `src.len()` and
+    /// `dst.len()`.
     fn sub_multiword(
         &self,
         dst: &mut [u8],
@@ -232,6 +433,10 @@ pub trait Field {
         self.add_multiword(dst, src);
     }
 
+    /// Subtracts `src[0..len]` from `dst[0..len]` in place.
+    ///
+    /// This method will panic if `src.len()` or `dst.len()` is less than
+    /// the supplied `len` parameter.
     fn sub_multiword_len(
         &self,
         dst: &mut [u8],
@@ -241,6 +446,10 @@ pub trait Field {
         self.add_multiword_len(dst, src, len);
     }
 
+    /// Subtracts `scale * src` from `dst` in place, over the smallest common length.
+    ///
+    /// The length used in the operation is set to the minimum of `src.len()` and
+    /// `dst.len()`.
     fn sub_scaled_multiword(
         &self,
         dst: &mut [u8],
@@ -250,6 +459,10 @@ pub trait Field {
         self.add_scaled_multiword(dst, src, scale);
     }
 
+    /// Subtracts `scale * src[0..len]` from `dst[0..len]` in place.
+    ///
+    /// This method will panic if `src.len()` or `dst.len()` is less than
+    /// the supplied `len` parameter.
     fn sub_scaled_multiword_len(
         &self,
         dst: &mut [u8],
@@ -260,6 +473,7 @@ pub trait Field {
         self.add_scaled_multiword_len(dst, src, scale, len);
     }
 
+    /// Multiplies `dst` by `scale` in place.
     fn mult_multiword(
         &self,
         dst: &mut [u8],
@@ -270,6 +484,10 @@ pub trait Field {
         }
     }
 
+    /// Divides `dst` by `scale` in place.
+    ///
+    /// This method will panic if `scale` is zero. The contents of the
+    /// resulting error message are not defined.
     fn div_multiword(
         &self,
         dst: &mut [u8],
@@ -282,7 +500,27 @@ pub trait Field {
 }
 
 // TODO: Optionally support SIMD. This can reuse mult_table and div_table
-// on x86_64 with SSE 4.
+// on x86_64 with SSE3 or AVX2.
+
+/// Implements field arithmetic compatible with all [`IrreducablePolynomial`]s.
+///
+/// Recall that there are two strategies for optimizing field arithmetic in
+/// `GF(2^8)`: accessing direct multiplication and division tables, and
+/// manipulating logarithms and exponentials. The latter method requires fewer
+/// operations, but is only possible if the given [`IrreducablePolynomial`] is
+/// primitive.
+///
+/// This struct uses direct multiplication and division tables for its
+/// operations, and is compatible with all [`IrreducablePolynomial`]s,
+/// including primitive ones. Operations are expected to be less performant
+/// than those implemented by [`PrimitivePolynomialField`], with the exception
+/// of vector operations, which may be accelerated in both using multiplication
+/// and division tables. See the [`Field`] documentation for more details
+/// regarding vector operations.
+///
+/// [`IrreducablePolynomial`]: enum.IrreducablePolynomial.html
+/// [`PrimitivePolynomialField`]: struct.PrimitivePolynomialField.html
+/// [`Field`]: trait.Field.html
 pub struct GeneralField {
     modulo: IrreducablePolynomial,
     mult_table: Vec<u8>,
@@ -294,6 +532,7 @@ pub struct GeneralField {
 }
 
 impl GeneralField {
+    /// Constructs a new `GeneralField` with all tables initialized.
     pub fn new(poly: IrreducablePolynomial) -> Self {
         let table_dim = 1 << 13;
         let mut mult_table = Vec::with_capacity(table_dim);
@@ -479,6 +718,25 @@ impl Field for GeneralField {
     }
 }
 
+/// Implements field arithmetic compatible with primitive [`IrreducablePolynomial`]s.
+///
+/// Recall that there are two strategies for optimizing field arithmetic in
+/// `GF(2^8)`: accessing direct multiplication and division tables, and
+/// manipulating logarithms and exponentials. The latter method requires fewer
+/// operations, but is only possible if the given [`IrreducablePolynomial`] is
+/// primitive.
+///
+/// This struct uses exponentiation and logarithm tables, and is only
+/// compatible with primitive [`IrreducablePolynomial`]s. For an implementation
+/// compatible with all [`IrreducablePolynomial`]s, see [`GeneralField`].
+///
+/// Note that this implementation may also use multiplication and division
+/// tables for its vectorized operations. See the [`Field`] documentation
+/// for more details.
+///
+/// [`IrreducablePolynomial`]: enum.IrreducablePolynomial.html
+/// [`GeneralField`]: struct.GeneralField.html
+/// [`Field`]: trait.Field.html
 pub struct PrimitivePolynomialField {
     modulo: IrreducablePolynomial,
     exp_table: Vec<u8>,
@@ -488,7 +746,14 @@ pub struct PrimitivePolynomialField {
 }
 
 impl PrimitivePolynomialField {
-    // Returns None if the polynomial is not primitive
+    /// Constructs a new `PrimitivePolynomialField` with all tables initialized.
+    ///
+    /// If the given `poly` argument is not primitive, this function returns
+    /// `None`; otherwise it returns `Some(f: PrimitivePolynomialField)`.
+    /// In situations where the use of `Option<PrimitivePolynomialField>` is
+    /// less ideal than incurring a panic, consider [`new_might_panic`].
+    ///
+    /// [`new_might_panic`]: #method.new_might_panic
     pub fn new(poly: IrreducablePolynomial) -> Option<Self> {
         if !poly.is_primitive() {
             return None;
@@ -520,6 +785,14 @@ impl PrimitivePolynomialField {
         Some(ret)
     }
 
+    /// Constructs a new `PrimitivePolynomialField` with all tables initialized.
+    ///
+    /// If the given `poly` argument is not primitive, this function panics.
+    /// The contents of the resulting error message are not defined.
+    /// In situations where incurring a panic is less ideal than the use of
+    /// `Option<PrimitivePolynomialField>`, consider [`new`].
+    ///
+    /// [`new`]: #method.new
     pub fn new_might_panic(poly: IrreducablePolynomial) -> Self {
         match Self::new(poly) {
             Some(f) => f,
@@ -583,7 +856,7 @@ impl Field for PrimitivePolynomialField {
         len: usize
     ) {
         // TODO: If we support x86_64, which means we support SSE, it's faster
-        // to use the classic mult/div tables over 16/32/64 (SSE, AVX, AVX2)
+        // to use the classic mult/div tables over 16/32/64 (SSE, AVX2, AVX512)
         // elements than continue to use the exp/log tables.
         if scale == 0 {
             return;
@@ -606,7 +879,7 @@ impl Field for PrimitivePolynomialField {
         len: usize
     ) {
         // TODO: If we support x86_64, which means we support SSE, it's faster
-        // to use the classic mult/div tables over 16/32/64 (SSE, AVX, AVX2)
+        // to use the classic mult/div tables over 16/32/64 (SSE, AVX2, AVX512)
         // elements than continue to use the exp/log tables. 
         if scale == 0 {
             for i in 0..len {
@@ -628,7 +901,7 @@ impl Field for PrimitivePolynomialField {
         len: usize
     ) {
         // TODO: If we support x86_64, which means we support SSE, it's faster
-        // to use the classic mult/div tables over 16/32/64 (SSE, AVX, AVX2)
+        // to use the classic mult/div tables over 16/32/64 (SSE, AVX2, AVX512)
         // elements than continue to use the exp/log tables.
         if scale == 0 {
             panic!("Cannot divide vector by 0");
@@ -641,6 +914,10 @@ impl Field for PrimitivePolynomialField {
     }
 }
 
+// Slow variants of GF(2^8) arithmetic, used for generating tables used
+// by the fast variants.
+
+// Exposed as pub(crate) for testing purposes.
 pub(crate) fn gf2_mult_mod(
     left: u8,
     right: u8,
