@@ -33,7 +33,7 @@ use std::ptr;
 /// For example, [`Poly84310`] represents `x^8 + x^4 + x^3 + x + 1`.
 ///
 /// [`Poly84310`]: #variant.Poly84310
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum IrreducablePolynomial {
     Poly84310   = 0x1b,
     Poly84320   = 0x1d, // Primitive polynomial
@@ -531,6 +531,9 @@ pub struct GeneralField {
     pexp_table: *const u8
 }
 
+// This is ok because instance data is not modified after construction.
+unsafe impl Sync for GeneralField {}
+
 impl GeneralField {
     /// Constructs a new `GeneralField` with all tables initialized.
     pub fn new(poly: IrreducablePolynomial) -> Self {
@@ -744,6 +747,9 @@ pub struct PrimitivePolynomialField {
     pexp_table: *const u8,
     plog_table: *const u8
 }
+
+// This is ok because instance data is not modified after construction.
+unsafe impl Sync for PrimitivePolynomialField {}
 
 impl PrimitivePolynomialField {
     /// Constructs a new `PrimitivePolynomialField` with all tables initialized.

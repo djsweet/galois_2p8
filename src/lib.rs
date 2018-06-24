@@ -1,6 +1,7 @@
 // lib.rs: part of the galois_2p8 Crate.
 // Copyright 2018 Daniel Sweet. See the COPYRIGHT file at the top-level
 // directory of this distribution.
+
 //! Provides operations over all `GF(2^8)` extensions.
 //!
 //! # Fields
@@ -116,6 +117,16 @@
 //! [`Field`]: field/trait.Field.html
 //! [`GeneralField`]: field/struct.GeneralField.html
 //! [`PrimitivePolynomialField`]: field/struct.PrimitivePolynomialField.html
+
+// "The general internet" says that this _has_ to happen before
+// more module definitions. It'd be real nice if the spec warned us. :/
+#[cfg(test)]
+#[macro_use]
+extern crate proptest;
+#[cfg(test)]
+#[macro_use]
+extern crate lazy_static;
+
 pub use field::{
     IrreducablePolynomial,
     Field,
@@ -126,4 +137,7 @@ pub use field::{
 pub mod field;
 
 #[cfg(test)]
+#[macro_use]
 mod field_tests;
+#[cfg(test)]
+mod field_multiword_tests;

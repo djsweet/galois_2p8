@@ -4,3 +4,7 @@ version = "0.1.0"
 authors = ["Daniel Sweet <danieljsweet@icloud.com>"]
 
 [dependencies]
+
+[dev-dependencies]
+proptest = "0.7"
+lazy_static = "1.0"

@@ -3,33 +3,62 @@
 // directory of this distribution.
 
 use field;
-use field::Field;
+use field::{
+    Field,
+    GeneralField,
+    PrimitivePolynomialField
+};
 
-fn general_fields_do(func: impl Fn(field::GeneralField)) {
-    for &poly in field::POLYNOMIALS.iter() {
-        let test_field = field::GeneralField::new(poly);
+lazy_static! {
+    static ref GENERAL_FIELDS: Vec<GeneralField> = {
+        let mut v = Vec::new();
+        for &poly in field::POLYNOMIALS.iter() {
+            v.push(GeneralField::new(poly));
+        }
+        v
+    };
+
+    static ref PRIMITIVE_FIELDS: Vec<PrimitivePolynomialField> = {
+        let mut v = Vec::new();
+        for &poly in field::PRIMITIVES.iter() {
+            v.push(PrimitivePolynomialField::new_might_panic(poly));
+        }
+        v
+    };
+}
+
+pub(crate) fn general_fields_do(
+    func: impl Fn(&field::GeneralField)
+) {
+    for test_field in GENERAL_FIELDS.iter() {
         func(test_field);
     }
 }
 
-fn primitive_fields_do(func: impl Fn(field::PrimitivePolynomialField)) {
-    for &poly in field::PRIMITIVES.iter() {
-        match field::PrimitivePolynomialField::new(poly) {
-            Some(test_field) => func(test_field),
-            None => panic!("{:?} wasn't primitive", poly)
-        }
+pub(crate) fn primitive_fields_do(
+    func: impl Fn(&PrimitivePolynomialField)
+) {
+    for test_field in PRIMITIVE_FIELDS.iter() {
+        func(test_field);
     }
 }
 
-fn all_fields_do(
-    general: impl Fn(field::GeneralField),
-    primitive: impl Fn(field::PrimitivePolynomialField)
+pub(crate) fn all_fields_do(
+    general: impl Fn(&GeneralField),
+    primitive: impl Fn(&PrimitivePolynomialField)
 ) {
     general_fields_do(general);
     primitive_fields_do(primitive);
 }
 
-fn test_field_inverses_typed(field: impl field::Field) {
+#[macro_export]
+macro_rules! all_fields_do_both {
+    ($func:expr) => (
+        all_fields_do($func, $func)
+    );
+}
+
+fn test_field_inverses_typed(field: &impl field::Field) {
     // Additive inverses
     // We're cheating here by way of knowing that
     // this is all just xor under the hood, and as a result,
@@ -77,7 +106,7 @@ fn test_field_inverses_primitive() {
     primitive_fields_do(test_field_inverses_typed);
 }
 
-fn test_field_associativity_typed(field: impl field::Field) {
+fn test_field_associativity_typed(field: &impl field::Field) {
     // Looping over all possible elements in the field is actually
     // pretty fast, usually less than a second in C even without
     // compiler optimizations, and no more than 30 seconds on
@@ -118,13 +147,10 @@ fn test_field_associativity_typed(field: impl field::Field) {
 
 #[test]
 fn test_field_associativity() {
-    all_fields_do(
-        test_field_associativity_typed,
-        test_field_associativity_typed
-    )
+    all_fields_do_both!(test_field_associativity_typed);
 }
 
-fn test_field_commutivity_typed(field: impl field::Field) {
+fn test_field_commutivity_typed(field: &impl field::Field) {
     for a in 0..=255 {
         for b in 0..=255 {
             let a_plus_b = field.add(a, b);
@@ -151,13 +177,10 @@ fn test_field_commutivity_typed(field: impl field::Field) {
 
 #[test]
 fn test_field_commutivity() {
-    all_fields_do(
-        test_field_commutivity_typed,
-        test_field_commutivity_typed
-    )
+    all_fields_do_both!(test_field_commutivity_typed);
 }
 
-fn test_field_distributivity_typed(field: impl field::Field) {
+fn test_field_distributivity_typed(field: &impl field::Field) {
     for a in 0..=255 {
         for b in 0..=255 {
             for c in 0..=255 {
@@ -182,10 +205,7 @@ fn test_field_distributivity_typed(field: impl field::Field) {
 
 #[test]
 fn test_field_distributivity() {
-    all_fields_do(
-        test_field_distributivity_typed,
-        test_field_distributivity_typed
-    )
+    all_fields_do_both!(test_field_distributivity_typed);
 }
 
 fn test_primitive_general_equiv_poly(poly: field::IrreducablePolynomial) {
@@ -219,7 +239,7 @@ fn test_primitive_general_equiv() {
     }
 }
 
-fn test_typed_slow_equiv_field(field: impl field::Field) {
+fn test_typed_slow_equiv_field(field: &impl field::Field) {
     for a in 0..=255 {
         for b in 0..=255 {
             let field_mult = field.mult(a, b);
