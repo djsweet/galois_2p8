@@ -560,10 +560,15 @@ impl GeneralField {
             exp_table.push(two_x);
             two_x = gf2_mult_mod(alpha, 2, poly);
         }
-        for a in 0..=255 {
+        // Handle 0/n cases separately
+        for i in 0..32 {
+            div_table[i] = 0;
+        }
+        for a in 1..=255 {
             let mt_offset = a * 32;
             for b_low_offset in 0..16 {
                 let prod_b_low = mult_table[mt_offset + b_low_offset];
+                div_table[mt_offset + 16] = 0;
                 for b_high_offset in 16..32 {
                     let b_high = ((b_high_offset - 16) << 4) as u8;
                     let b = b_high + (b_low_offset as u8);
