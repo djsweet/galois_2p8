@@ -49,6 +49,26 @@ fn test_slice_ops(
     assert_eq!(test_dst, ctl_dst);
 }
 
+fn test_slice_ops_upto(
+    dst: &[u8],
+    src: &[u8],
+    upto: usize,
+    vector_op: impl Fn(&mut [u8], &[u8], usize),
+    scalar_op: impl Fn(u8, u8) -> u8
+) {
+    assert_eq!(dst.len(), src.len());
+    assert!(upto <= dst.len());
+    let mut test_dst = Vec::with_capacity(dst.len());
+    let mut ctl_dst = Vec::with_capacity(dst.len());
+    test_dst.extend(dst);
+    ctl_dst.extend(dst);
+    vector_op(&mut test_dst, src, upto);
+    for i in 0..upto {
+        ctl_dst[i] = scalar_op(dst[i], src[i]);
+    }
+    assert_eq!(test_dst, ctl_dst);
+}
+
 prop_compose! {
     fn equal_length_vecs()(
         (dst, src) in (1..1024usize).prop_flat_map(
@@ -59,6 +79,20 @@ prop_compose! {
         )
     ) -> (Vec<u8>, Vec<u8>) {
         (dst, src)
+    }
+}
+
+prop_compose! {
+    fn equal_length_vecs_offset()(
+        (dst, src, off) in (2..1024usize).prop_flat_map(
+            |len| (
+                collection::vec(num::u8::ANY, len),
+                collection::vec(num::u8::ANY, len),
+                1..len
+            )
+        )
+    ) -> (Vec<u8>, Vec<u8>, usize) {
+        (dst, src, off)
     }
 }
 
@@ -124,6 +158,22 @@ proptest! {
 }
 
 // add_multiword_len
+proptest! {
+    #[test]
+    fn test_add_multiword_len(
+        (ref dst, ref src, off) in equal_length_vecs_offset()
+    ) {
+        all_fields_do_both!(
+            |f| test_slice_ops_upto(
+                dst,
+                src,
+                off,
+                |d, s, o| f.add_multiword_len(d, s, o),
+                |d, s| f.add(d, s)
+            )
+        );
+    }
+}
 
 // add_scaled_multiword
 proptest! {
@@ -144,6 +194,23 @@ proptest! {
 }
 
 // add_scaled_multiword_len
+proptest! {
+    #[test]
+    fn test_add_scaled_multiword_len(
+        (ref dst, ref src, off) in equal_length_vecs_offset(),
+        scale in num::u8::ANY
+    ) {
+        all_fields_do_both!(
+            |f| test_slice_ops_upto(
+                dst,
+                src,
+                off,
+                |d, s, o| f.add_scaled_multiword_len(d, s, scale, o),
+                |d, s| f.add(d, f.mult(s, scale))
+            )
+        );
+    }
+}
 
 // sub_ptr_len
 proptest! {
@@ -198,6 +265,22 @@ proptest! {
 }
 
 // sub_multiword_len
+proptest! {
+    #[test]
+    fn test_sub_multiword_len(
+        (ref src, ref dst, off) in equal_length_vecs_offset()
+    ) {
+        all_fields_do_both!(
+            |f| test_slice_ops_upto(
+                dst,
+                src,
+                off,
+                |d, s, o| f.sub_multiword_len(d, s, o),
+                |d, s| f.sub(d, s)
+            )
+        );
+    }
+}
 
 // sub_scaled_multiword
 proptest! {
@@ -218,6 +301,23 @@ proptest! {
 }
 
 // sub_scaled_multiword_len
+proptest! {
+    #[test]
+    fn test_sub_scaled_multiword_len(
+        (ref dst, ref src, off) in equal_length_vecs_offset(),
+        scale in num::u8::ANY
+    ) {
+        all_fields_do_both!(
+            |f| test_slice_ops_upto(
+                dst,
+                src,
+                off,
+                |d, s, o| f.sub_scaled_multiword_len(d, s, scale, o),
+                |d, s| f.sub(d, f.mult(s, scale))
+            )
+        );
+    }
+}
 
 // mult_ptr_len
 fn test_mult_ptr_len_params(
