@@ -22,6 +22,9 @@
 //! all possible irreducable polynomials capable of generating `GF(2^8)`.
 use std::ptr;
 
+#[cfg(all(feature="simd", target_arch="x86_64"))]
+use std::arch::x86_64;
+
 /// Represents an irreducable polynomial of `GF(2^8)`.
 ///
 /// Each polynomial is named according to the nonzero positions of
@@ -499,8 +502,154 @@ pub trait Field {
     }
 }
 
-// TODO: Optionally support SIMD. This can reuse mult_table and div_table
-// on x86_64 with SSE3 or AVX2.
+// SIMD support. Currently limited to x86_64 and SSE.
+// The simd_scale_vec and simd_scale_vec_into functions are expected
+// to be used on all SIMD platforms.
+
+// simd_scale_vec_writeback is x86_64 specific, so we don't use it in
+// any client code, only in simd_scale_vec and simd_scale_vec_into.
+#[cfg(all(feature="simd", target_arch="x86_64"))]
+unsafe fn simd_scale_vec_writeback(
+    scale_table: *const u8,
+    mut dst: *mut u8,
+    mut src: *const u8,
+    mut len: usize,
+    scale: u8,
+    // write_func_32: impl Fn(*mut u8, x86_64::__m256i),
+    write_func_16: impl Fn(*mut u8, x86_64::__m128i)
+) -> usize {
+    let scale_offset = scale_table.offset(scale as isize * 32);
+    let scale_reg_lower = x86_64::_mm_loadu_si128(
+        scale_offset as *const x86_64::__m128i
+    );
+    let scale_reg_upper = x86_64::_mm_loadu_si128(
+        scale_offset.offset(16) as *const x86_64::__m128i
+    );
+    let mask = x86_64::_mm_set1_epi8(0x0f);
+    // Since Rust 1.27, even though AVX was marked as "stable", the default
+    // x86_64 ABI generates broken code that only works with the XMM registers
+    // due to a code generation bug at the LLVM level. If AVX is explicitly
+    // enabled at the ABI level, this functions correctly. However, because
+    // the defaults are currently broken, this AVX usage will have to wait.
+    //
+    // if is_x86_feature_detected!("avx2") && len >= 32 {
+    //     use std::slice;
+    //     let srl_256 = x86_64::_mm256_broadcastsi128_si256(scale_reg_lower);
+    //     let sru_256 = x86_64::_mm256_broadcastsi128_si256(scale_reg_upper);
+    //     let mask_256 = x86_64::_mm256_broadcastsi128_si256(mask);
+    //     while len >= 32 {
+    //         let window = x86_64::_mm256_loadu_si256(
+    //             src as *const x86_64::__m256i
+    //         );
+    //         let low_portion = x86_64::_mm256_and_si256(
+    //             window,
+    //             mask_256
+    //         );
+    //         let low_value = x86_64::_mm256_shuffle_epi8(
+    //             srl_256,
+    //             low_portion
+    //         );
+    //         let high_portion = x86_64::_mm256_and_si256(
+    //             x86_64::_mm256_srli_epi16(window, 4),
+    //             mask_256
+    //         );
+    //         let high_value = x86_64::_mm256_shuffle_epi8(
+    //             sru_256,
+    //             high_portion
+    //         );
+    //         write_func_32(dst, x86_64::_mm256_xor_si256(high_value, low_value));
+    //         src = src.offset(32);
+    //         dst = dst.offset(32);
+    //         len -= 32;
+    //     }
+    // }
+    while len >= 16 {
+        let window = x86_64::_mm_loadu_si128(
+            src as *const x86_64::__m128i
+        );
+        let low_portion = x86_64::_mm_and_si128(
+            window,
+            mask
+        );
+        let low_value = x86_64::_mm_shuffle_epi8(
+            scale_reg_lower,
+            low_portion
+        );
+        let high_portion = x86_64::_mm_and_si128(
+            x86_64::_mm_srli_epi16(window, 4),
+            mask
+        );
+        let high_value = x86_64::_mm_shuffle_epi8(
+            scale_reg_upper,
+            high_portion
+        );
+        write_func_16(dst, x86_64::_mm_xor_si128(high_value, low_value));
+        src = src.offset(16);
+        dst = dst.offset(16);
+        len -= 16;
+    }
+    return len;
+}
+
+#[cfg(all(feature="simd", target_arch="x86_64"))]
+unsafe fn simd_scale_vec(
+    scale_table: *const u8,
+    dst: *mut u8,
+    src: *const u8,
+    len: usize,
+    scale: u8
+) -> usize {
+    use std::arch::x86_64;
+    simd_scale_vec_writeback(
+        scale_table,
+        dst,
+        src,
+        len,
+        scale,
+        // |dst_ptr, writeback| {
+        //     x86_64::_mm256_storeu_si256(
+        //         dst_ptr as *mut x86_64::__m256i,
+        //         writeback
+        //     )
+        // },
+        |dst_ptr, writeback| {
+            x86_64::_mm_storeu_si128(
+                dst_ptr as *mut x86_64::__m128i,
+                writeback
+            )
+        }
+    )
+}
+
+#[cfg(all(feature="simd", target_arch="x86_64"))]
+unsafe fn simd_scale_vec_into(
+    scale_table: *const u8,
+    dst: *mut u8,
+    src: *const u8,
+    len: usize,
+    scale: u8
+) -> usize {
+    use std::arch::x86_64;
+    simd_scale_vec_writeback(
+        scale_table,
+        dst,
+        src,
+        len,
+        scale,
+        // |dst, writeback| {
+        //     let dst_ptr = dst as *mut x86_64::__m256i;
+        //     let dst_value = x86_64::_mm256_loadu_si256(dst_ptr);
+        //     let added = x86_64::_mm256_xor_si256(writeback, dst_value);
+        //     x86_64::_mm256_storeu_si256(dst_ptr, added);
+        // },
+        |dst, writeback| {
+            let dst_ptr = dst as *mut x86_64::__m128i;
+            let dst_value = x86_64::_mm_loadu_si128(dst_ptr);
+            let added = x86_64::_mm_xor_si128(writeback, dst_value);
+            x86_64::_mm_storeu_si128(dst_ptr, added);
+        }
+    )
+}
 
 /// Implements field arithmetic compatible with all [`IrreducablePolynomial`]s.
 ///
@@ -672,10 +821,10 @@ impl Field for GeneralField {
 
     unsafe fn add_ptr_scaled_len(
         &self,
-        dst: *mut u8,
-        src: *const u8,
+        mut dst: *mut u8,
+        mut src: *const u8,
         scale: u8,
-        len: usize
+        mut len: usize
     ) {
         if scale == 0 {
             return;
@@ -684,43 +833,83 @@ impl Field for GeneralField {
             self.add_ptr_len(dst, src, len);
             return;
         }
-        for i in 0..len {
-            let dst_ptr = dst.offset(i as isize);
-            let src_ptr = src.offset(i as isize);
-            *dst_ptr ^= self.mult(scale, *src_ptr);
+        #[cfg(feature="simd")]
+        {
+            let left = simd_scale_vec_into(
+                self.pmult_table,
+                dst,
+                src,
+                len,
+                scale
+            );
+            dst = dst.offset((len - left) as isize);
+            src = src.offset((len - left) as isize);
+            len = left;
+        }
+        while len > 0 {
+            *dst ^= self.mult(scale, *src);
+            dst = dst.offset(1);
+            src = src.offset(1);
+            len -= 1;
         }
     }
 
     unsafe fn mult_ptr_len(
         &self,
-        dst: *mut u8,
+        mut dst: *mut u8,
         scale: u8,
-        len: usize
+        mut len: usize
     ) {
         if scale == 0 {
             for i in 0..len {
                 *dst.offset(i as isize) = 0;
             }
         } else if scale != 1 {
-            for i in 0..len {
-                let dst_ptr = dst.offset(i as isize);
-                *dst_ptr = self.mult(*dst_ptr, scale);
+            #[cfg(feature="simd")]
+            {
+                let left = simd_scale_vec(
+                    self.pmult_table,
+                    dst,
+                    dst,
+                    len,
+                    scale
+                );
+                dst = dst.offset((len - left) as isize);
+                len = left;
+            }
+            while len > 0 {
+                *dst = self.mult(*dst, scale);
+                dst = dst.offset(1);
+                len -= 1;
             }
         }
     }
 
     unsafe fn div_ptr_len(
         &self,
-        dst: *mut u8,
+        mut dst: *mut u8,
         scale: u8,
-        len: usize
+        mut len: usize
     ) {
         if scale == 0 {
             panic!("Can't divide vector by 0");
         } else if scale != 1 {
-            for i in 0..len {
-                let dst_ptr = dst.offset(i as isize);
-                *dst_ptr = self.div(*dst_ptr, scale);
+            #[cfg(feature="simd")]
+            {
+                let left = simd_scale_vec(
+                    self.pdiv_table,
+                    dst,
+                    dst,
+                    len,
+                    scale
+                );
+                dst = dst.offset((len - left) as isize);
+                len = left;
+            }
+            while len > 0 {
+                *dst = self.div(*dst, scale);
+                dst = dst.offset(1);
+                len -= 1;
             }
         }
     }
