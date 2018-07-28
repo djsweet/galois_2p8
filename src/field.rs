@@ -651,6 +651,78 @@ unsafe fn simd_scale_vec_into(
     )
 }
 
+// SIMD operations function best over a traditional multiply/divide table.
+// In the case of GeneralField, this is easy enough to support, because
+// those implementations use traditional multiply/divide tables anyway.
+// In the case of PrimitivePolynomialField, we'll need extra multiply/
+// divide tables in addition to the exponent/logarithm tables. However,
+// the multiply/divide tables can be constructed the same way for both
+// implementations.
+
+fn construct_mult_div_tables(
+    poly: IrreducablePolynomial
+) -> (Vec<u8>, Vec<u8>) {
+    let table_dim = 1 << 13;
+    let mut mult_table = Vec::with_capacity(table_dim);
+    let mut div_table = Vec::with_capacity(table_dim);
+    unsafe {
+        // We're fine with pushing to mult table, but div_table
+        // needs random access.
+        div_table.set_len(table_dim);
+    }
+    // Handle the mult table.
+    for alpha in 0..=255 {
+        for low in 0..16 {
+            let product = gf2_mult_mod(alpha, low, poly);
+            mult_table.push(product);
+        }
+        for lowshift in 0..16 {
+            let high = lowshift << 4;
+            let product = gf2_mult_mod(alpha, high, poly);
+            mult_table.push(product);
+        }
+    }
+    // These first 32 entries are n/0, which is undefined, but worth
+    // clearing out anyway in the event of some OOB access bug.
+    for i in 0..32 {
+        div_table[i] = 0;
+    }
+    // Handle the rest of the div table.
+    for a in 1..=255 {
+        let mt_offset = a * 32;
+        // Handle 0/n cases separately in div_table for the high-quad access:
+        // we're never going to see 0 fill out the high-quads from in a
+        // multiplication so we have to explicitly clear it out here.
+        div_table[mt_offset + 16] = 0;
+        for b_low_offset in 0..16 {
+            let prod_b_low = mult_table[mt_offset + b_low_offset];
+            for b_high_offset in 16..32 {
+                let prod_b_high = mult_table[mt_offset + b_high_offset];
+                let prod = prod_b_low ^ prod_b_high;
+                // In here, we have a * b = prod. So we can store
+                // both prod / a = b and prod / b = a, which is
+                // what we do with the div_b_offset and div_a_offset
+                // into the div table.
+                let b_high = ((b_high_offset - 16) << 4) as u8;
+                let b = b_high + (b_low_offset as u8);
+                if prod < 16 {
+                    let div_b_offset = (b as usize) * 32 + prod as usize;
+                    div_table[div_b_offset] = a as u8;
+                    let div_a_offset = mt_offset + prod as usize;
+                    div_table[div_a_offset] = b;
+                } else if prod & 0x0f == 0 {
+                    let prod_offset = (prod >> 4) as usize + 16;
+                    let div_b_offset = (b as usize) * 32 + prod_offset;
+                    div_table[div_b_offset] = a as u8;
+                    let div_a_offset = mt_offset + prod_offset;
+                    div_table[div_a_offset] = b;
+                }
+            }
+        }
+    }
+    (mult_table, div_table)
+}
+
 /// Implements field arithmetic compatible with all [`IrreducablePolynomial`]s.
 ///
 /// Recall that there are two strategies for optimizing field arithmetic in
@@ -686,57 +758,12 @@ unsafe impl Sync for GeneralField {}
 impl GeneralField {
     /// Constructs a new `GeneralField` with all tables initialized.
     pub fn new(poly: IrreducablePolynomial) -> Self {
-        let table_dim = 1 << 13;
-        let mut mult_table = Vec::with_capacity(table_dim);
-        let mut div_table = Vec::with_capacity(table_dim);
         let mut exp_table = Vec::with_capacity(1 << 8);
         let mut two_x = 1;
-        unsafe {
-            // We're fine with pushing to mult_table, but
-            // div_table needs random access
-            div_table.set_len(table_dim);
-        }
+        let (mult_table, div_table) = construct_mult_div_tables(poly);
         for alpha in 0..=255 {
-            for low in 0..16 {
-                let product = gf2_mult_mod(alpha, low, poly);
-                mult_table.push(product);
-            }
-            for lowshift in 0..16 {
-                let high = lowshift << 4;
-                let product = gf2_mult_mod(alpha, high, poly);
-                mult_table.push(product);
-            }
             exp_table.push(two_x);
             two_x = gf2_mult_mod(alpha, 2, poly);
-        }
-        // Handle 0/n cases separately
-        for i in 0..32 {
-            div_table[i] = 0;
-        }
-        for a in 1..=255 {
-            let mt_offset = a * 32;
-            for b_low_offset in 0..16 {
-                let prod_b_low = mult_table[mt_offset + b_low_offset];
-                div_table[mt_offset + 16] = 0;
-                for b_high_offset in 16..32 {
-                    let b_high = ((b_high_offset - 16) << 4) as u8;
-                    let b = b_high + (b_low_offset as u8);
-                    let prod_b_high = mult_table[mt_offset + b_high_offset];
-                    let prod = prod_b_low ^ prod_b_high;
-                    if prod < 16 {
-                        let div_b_offset = (b as usize) * 32 + prod as usize;
-                        div_table[div_b_offset] = a as u8;
-                        let div_a_offset = mt_offset + prod as usize;
-                        div_table[div_a_offset] = b;
-                    } else if prod & 0x0f == 0 {
-                        let prod_offset = (prod >> 4) as usize + 16;
-                        let div_b_offset = (b as usize) * 32 + prod_offset;
-                        div_table[div_b_offset] = a as u8;
-                        let div_a_offset = mt_offset + prod_offset;
-                        div_table[div_a_offset] = b;
-                    }
-                }
-            }
         }
         let mut ret = Self {
             modulo: poly,
