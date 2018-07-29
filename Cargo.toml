@@ -1,7 +1,15 @@
 [package]
 name = "galois_2p8"
+description = "Basic Arithmetic over all GF(2^8) fields"
+license = "MIT"
 version = "0.1.0"
+
 authors = ["Daniel Sweet <danieljsweet@icloud.com>"]
+readme = "README.md"
+repository = "https://github.com/djsweet/galois_2p8"
+
+categories = ["algorithms", "science"]
+keywords = ["field", "galois"]
 
 [dependencies]
 
