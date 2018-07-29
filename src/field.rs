@@ -254,9 +254,12 @@ impl IrreducablePolynomial {
 /// earlier `x86` architecture; in SSE3, an intrinsic `_mm_shuffle_epi8` was
 /// added that allows the entries of a vector register `a` to function as
 /// indices of the vector register `b` in the lower four bits, effectively
-/// implementing an accelerated 16-entry table lookup. This intrinsic (and the
-/// AVX2 32-byte extension `_mm256_shuffle_epi8`) is not yet used, but will be
-/// used when Rust gains stable SIMD intrinsic APIs.
+/// implementing an accelerated 16-entry table lookup. These SSE3 intrinsics
+/// are used for multiword operations if the "simd" feature is enabled.
+///
+/// As of Rust 1.27.2, code generation for AVX on the default ABI results in
+/// the generation of incorrect code. Because of this, `galois_2p8` does not
+/// currently use any AVX2 intrinsics.
 ///
 /// [`IrreducablePolynomial`]: enum.IrreducablePolynomial.html
 /// [`GeneralField`]: struct.GeneralField.html
