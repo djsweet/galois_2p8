@@ -966,7 +966,16 @@ pub struct PrimitivePolynomialField {
     exp_table: Vec<u8>,
     log_table: Vec<u8>,
     pexp_table: *const u8,
-    plog_table: *const u8
+    plog_table: *const u8,
+    // These fields are only used with SIMD support.
+    #[allow(dead_code)]
+    mult_table: Vec<u8>,
+    #[allow(dead_code)]
+    div_table: Vec<u8>,
+    #[allow(dead_code)]
+    pmult_table: *const u8,
+    #[allow(dead_code)]
+    pdiv_table: *const u8
 }
 
 // This is ok because instance data is not modified after construction.
@@ -1000,15 +1009,38 @@ impl PrimitivePolynomialField {
         }
         // This isn't used
         log_table[0] = 0;
+        // These _have_ to remain mutable in general, because we might be
+        // altering them if SIMD is enabled.
+        // Note that Vec::with_capacity(0) does not allocate, so in the
+        // non-SIMD case we don't even trigger a heap allocation.
+        #[allow(unused_assignments, unused_mut)]
+        let mut mult_table = Vec::with_capacity(0);
+        #[allow(unused_assignments, unused_mut)]
+        let mut div_table = Vec::with_capacity(0);
+        #[cfg(feature = "simd")]
+        {
+            let tup = construct_mult_div_tables(poly);
+            mult_table = tup.0;
+            div_table = tup.1;
+        }
         let mut ret = Self{
             modulo: poly,
             exp_table: exp_table,
             log_table: log_table,
             pexp_table: ptr::null(),
-            plog_table: ptr::null()
+            plog_table: ptr::null(),
+            mult_table: mult_table,
+            div_table: div_table,
+            pmult_table: ptr::null(),
+            pdiv_table: ptr::null()
         };
         ret.pexp_table = ret.exp_table.as_ptr();
         ret.plog_table = ret.log_table.as_ptr();
+        #[cfg(feature = "simd")]
+        {
+            ret.pmult_table = ret.mult_table.as_ptr();
+            ret.pdiv_table = ret.div_table.as_ptr();
+        }
         Some(ret)
     }
 
@@ -1077,14 +1109,11 @@ impl Field for PrimitivePolynomialField {
 
     unsafe fn add_ptr_scaled_len(
         &self,
-        dst: *mut u8,
-        src: *const u8,
+        mut dst: *mut u8,
+        mut src: *const u8,
         scale: u8,
-        len: usize
+        mut len: usize
     ) {
-        // TODO: If we support x86_64, which means we support SSE, it's faster
-        // to use the classic mult/div tables over 16/32/64 (SSE, AVX2, AVX512)
-        // elements than continue to use the exp/log tables.
         if scale == 0 {
             return;
         }
@@ -1092,50 +1121,84 @@ impl Field for PrimitivePolynomialField {
             self.add_ptr_len(dst, src, len);
             return;
         }
-        for i in 0..len {
-            let dst_ptr = dst.offset(i as isize);
-            let src_ptr = src.offset(i as isize);
-            *dst_ptr ^=  self.mult(scale, *src_ptr);
+        #[cfg(feature = "simd")]
+        {
+            let left = simd_scale_vec_into(
+                self.pmult_table,
+                dst,
+                src,
+                len,
+                scale
+            );
+            dst = dst.offset((len - left) as isize);
+            src = src.offset((len - left) as isize);
+            len = left;
+        }
+        while len > 0 {
+            *dst ^= self.mult(scale, *src);
+            dst = dst.offset(1);
+            src = src.offset(1);
+            len -= 1;
         }
     }
 
     unsafe fn mult_ptr_len(
         &self,
-        dst: *mut u8,
+        mut dst: *mut u8,
         scale: u8,
-        len: usize
+        mut len: usize
     ) {
-        // TODO: If we support x86_64, which means we support SSE, it's faster
-        // to use the classic mult/div tables over 16/32/64 (SSE, AVX2, AVX512)
-        // elements than continue to use the exp/log tables. 
         if scale == 0 {
             for i in 0..len {
                 let dst_ptr = dst.offset(i as isize);
                 *dst_ptr = 0;
             }
         } else if scale != 1 {
-            for i in 0..len {
-                let dst_ptr = dst.offset(i as isize);
-                *dst_ptr = self.mult(*dst_ptr, scale);
+            #[cfg(feature = "simd")]
+            {
+                let left = simd_scale_vec(
+                    self.pmult_table,
+                    dst,
+                    dst,
+                    len,
+                    scale
+                );
+                dst = dst.offset((len - left) as isize);
+                len = left;
+            }
+            while len > 0 {
+                *dst = self.mult(*dst, scale);
+                dst = dst.offset(1);
+                len -= 1;
             }
         }
     }
 
     unsafe fn div_ptr_len(
         &self,
-        dst: *mut u8,
+        mut dst: *mut u8,
         scale: u8,
-        len: usize
+        mut len: usize
     ) {
-        // TODO: If we support x86_64, which means we support SSE, it's faster
-        // to use the classic mult/div tables over 16/32/64 (SSE, AVX2, AVX512)
-        // elements than continue to use the exp/log tables.
         if scale == 0 {
             panic!("Cannot divide vector by 0");
         } else if scale != 1 {
-            for i in 0..len {
-                let dst_ptr = dst.offset(i as isize);
-                *dst_ptr = self.div(*dst_ptr, scale);
+            #[cfg(feature = "simd")]
+            {
+                let left = simd_scale_vec(
+                    self.pdiv_table,
+                    dst,
+                    dst,
+                    len,
+                    scale
+                );
+                dst = dst.offset((len - left) as isize);
+                len = left;
+            }
+            while len > 0 {
+                *dst = self.div(*dst, scale);
+                dst = dst.offset(1);
+                len -= 1;
             }
         }
     }
