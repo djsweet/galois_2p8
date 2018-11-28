@@ -14,8 +14,8 @@ keywords = ["field", "galois"]
 [dependencies]
 
 [dev-dependencies]
-proptest = "0.8"
-lazy_static = "1.0"
+proptest = "0.8.7"
+lazy_static = "1.2.0"
 
 [features]
 # SIMD isn't a default feature because Rust 1.27+ currently only exports
