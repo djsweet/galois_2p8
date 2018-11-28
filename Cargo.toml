@@ -18,6 +18,6 @@ proptest = "0.8"
 lazy_static = "1.0"
 
 [features]
-# SIMD isn't a default feature because Rust 1.27 only exports x86/_64 ASM.
-# For maximum generality, it'll stay off by default.
+# SIMD isn't a default feature because Rust 1.27+ currently only exports
+# x86/_64 ASM. For maximum generality, it'll stay off by default.
 simd = []

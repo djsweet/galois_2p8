@@ -139,11 +139,10 @@ Common operations over vectors of `GF(2^8)` members lend themselves to
 acceleration with SIMD intrinsics, as per James Plank's [Screaming Fast Galois
 Field Arithmetic Using Intel SIMD Instructions]
 (http://web.eecs.utk.edu/~plank/plank/papers/FAST-2013-GF.html). This crate
-currently utilizes SSE 3 on `x86_64` only, and only if compiled with the
-`"simd"` feature. AVX intrinsics are currently not used due to
-[code generation bugs in `rustc`]
-(https://github.com/rust-lang/rust/issues/50154),
-but will be enabled when these bugs are fixed.
+currently utilizes SSE 3 and AVX 2 on `x86_64` only, and only if compiled with
+the `"simd"` feature. Additionally, AVX 2 is only used if the AVX 2 ABI enabled
+with the `avx2` code generation, e.g. by exporting
+`RUSTFLAGS="-C target-feature=avx2"`.
 
 ### Future Direction
 As of the current version of this crate (`v0.1.0`), only arithmetic and vector

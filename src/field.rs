@@ -258,8 +258,10 @@ impl IrreducablePolynomial {
 /// are used for multiword operations if the "simd" feature is enabled.
 ///
 /// As of Rust 1.27.2, code generation for AVX on the default ABI results in
-/// the generation of incorrect code. Because of this, `galois_2p8` does not
-/// currently use any AVX2 intrinsics.
+/// the generation of incorrect code. Because of this, `galois_2p8` only uses
+/// AVX 2 intrinsics for optimized multiplication and division if the `rustc`
+/// target feature `avx2` is enabled, e.g. exporting
+/// `RUSTFLAGS="-C target-feature=avx2` before running `rustc` or `cargo`.
 ///
 /// [`IrreducablePolynomial`]: enum.IrreducablePolynomial.html
 /// [`GeneralField`]: struct.GeneralField.html
@@ -505,7 +507,7 @@ pub trait Field {
     }
 }
 
-// SIMD support. Currently limited to x86_64 and SSE.
+// SIMD support. Currently limited to x86_64 and SSE or AVX 2.
 // The simd_scale_vec and simd_scale_vec_into functions are expected
 // to be used on all SIMD platforms.
 
@@ -518,7 +520,7 @@ unsafe fn simd_scale_vec_writeback(
     mut src: *const u8,
     mut len: usize,
     scale: u8,
-    // write_func_32: impl Fn(*mut u8, x86_64::__m256i),
+    _write_func_32: impl Fn(*mut u8, x86_64::__m256i),
     write_func_16: impl Fn(*mut u8, x86_64::__m128i)
 ) -> usize {
     let scale_offset = scale_table.offset(scale as isize * 32);
@@ -529,43 +531,51 @@ unsafe fn simd_scale_vec_writeback(
         scale_offset.offset(16) as *const x86_64::__m128i
     );
     let mask = x86_64::_mm_set1_epi8(0x0f);
-    // Since Rust 1.27, even though AVX was marked as "stable", the default
-    // x86_64 ABI generates broken code that only works with the XMM registers
-    // due to a code generation bug at the LLVM level. If AVX is explicitly
-    // enabled at the ABI level, this functions correctly. However, because
-    // the defaults are currently broken, this AVX usage will have to wait.
+    // In Rust 1.27, the x86_64 SIMD support was marked "stable", but due to
+    // code generation bugs in LLVM, if the AVX ABI was not enabled, rustc
+    // would generate incorrect assembly. As of this writing (2018-11-27),
+    // there's a race to see who is actually fixing the bug: rustc or LLVM.
     //
-    // if is_x86_feature_detected!("avx2") && len >= 32 {
-    //     use std::slice;
-    //     let srl_256 = x86_64::_mm256_broadcastsi128_si256(scale_reg_lower);
-    //     let sru_256 = x86_64::_mm256_broadcastsi128_si256(scale_reg_upper);
-    //     let mask_256 = x86_64::_mm256_broadcastsi128_si256(mask);
-    //     while len >= 32 {
-    //         let window = x86_64::_mm256_loadu_si256(
-    //             src as *const x86_64::__m256i
-    //         );
-    //         let low_portion = x86_64::_mm256_and_si256(
-    //             window,
-    //             mask_256
-    //         );
-    //         let low_value = x86_64::_mm256_shuffle_epi8(
-    //             srl_256,
-    //             low_portion
-    //         );
-    //         let high_portion = x86_64::_mm256_and_si256(
-    //             x86_64::_mm256_srli_epi16(window, 4),
-    //             mask_256
-    //         );
-    //         let high_value = x86_64::_mm256_shuffle_epi8(
-    //             sru_256,
-    //             high_portion
-    //         );
-    //         write_func_32(dst, x86_64::_mm256_xor_si256(high_value, low_value));
-    //         src = src.offset(32);
-    //         dst = dst.offset(32);
-    //         len -= 32;
-    //     }
-    // }
+    // Even assuming the code generation works properly, calling into the
+    // AVX intrinsic functions without targeting the AVX ABI is likely going
+    // to be slower due to function calling instead of just executing the
+    // assembly. So, for AVX 2 support at all, you'll have to enable the AVX 2
+    // ABI.
+    #[cfg(target_feature="avx2")]
+    {
+        if is_x86_feature_detected!("avx2") && len >= 32 {
+            let srl_256 = x86_64::_mm256_broadcastsi128_si256(scale_reg_lower);
+            let sru_256 = x86_64::_mm256_broadcastsi128_si256(scale_reg_upper);
+            let mask_256 = x86_64::_mm256_broadcastsi128_si256(mask);
+            while len >= 32 {
+                let window = x86_64::_mm256_loadu_si256(
+                    src as *const x86_64::__m256i
+                );
+                let low_portion = x86_64::_mm256_and_si256(
+                    window,
+                    mask_256
+                );
+                let low_value = x86_64::_mm256_shuffle_epi8(
+                    srl_256,
+                    low_portion
+                );
+                let high_portion = x86_64::_mm256_and_si256(
+                    x86_64::_mm256_srli_epi16(window, 4),
+                    mask_256
+                );
+                let high_value = x86_64::_mm256_shuffle_epi8(
+                    sru_256,
+                    high_portion
+                );
+                _write_func_32(dst, x86_64::_mm256_xor_si256(
+                    high_value, low_value
+                ));
+                src = src.offset(32);
+                dst = dst.offset(32);
+                len -= 32;
+            }
+        }
+    }
     while len >= 16 {
         let window = x86_64::_mm_loadu_si128(
             src as *const x86_64::__m128i
@@ -609,12 +619,12 @@ unsafe fn simd_scale_vec(
         src,
         len,
         scale,
-        // |dst_ptr, writeback| {
-        //     x86_64::_mm256_storeu_si256(
-        //         dst_ptr as *mut x86_64::__m256i,
-        //         writeback
-        //     )
-        // },
+        |dst_ptr, writeback| {
+            x86_64::_mm256_storeu_si256(
+                dst_ptr as *mut x86_64::__m256i,
+                writeback
+            )
+        },
         |dst_ptr, writeback| {
             x86_64::_mm_storeu_si128(
                 dst_ptr as *mut x86_64::__m128i,
@@ -639,12 +649,12 @@ unsafe fn simd_scale_vec_into(
         src,
         len,
         scale,
-        // |dst, writeback| {
-        //     let dst_ptr = dst as *mut x86_64::__m256i;
-        //     let dst_value = x86_64::_mm256_loadu_si256(dst_ptr);
-        //     let added = x86_64::_mm256_xor_si256(writeback, dst_value);
-        //     x86_64::_mm256_storeu_si256(dst_ptr, added);
-        // },
+        |dst, writeback| {
+            let dst_ptr = dst as *mut x86_64::__m256i;
+            let dst_value = x86_64::_mm256_loadu_si256(dst_ptr);
+            let added = x86_64::_mm256_xor_si256(writeback, dst_value);
+            x86_64::_mm256_storeu_si256(dst_ptr, added);
+        },
         |dst, writeback| {
             let dst_ptr = dst as *mut x86_64::__m128i;
             let dst_value = x86_64::_mm_loadu_si128(dst_ptr);
