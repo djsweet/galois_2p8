@@ -12,7 +12,7 @@
 //! An irreducable polynomial is analogous to a prime number: it cannot
 //! be factored as the product of two or more polynomials. Performing
 //! polynomial arithmetic modulo an irreducable polynomial of degree `n`
-//! ensures that all `2^(n-1)` values from `0` to `2^(n-1) - 1` are represented
+//! ensures that all `2^n` values from `0` to `2^n - 1` are represented
 //! within the extended field.
 //!
 //! Algebraic extensions to Galois fields can be expressed as operations
@@ -255,7 +255,7 @@ impl IrreducablePolynomial {
 /// added that allows the entries of a vector register `a` to function as
 /// indices of the vector register `b` in the lower four bits, effectively
 /// implementing an accelerated 16-entry table lookup. These SSE3 intrinsics
-/// are used for multiword operations if the "simd" feature is enabled.
+/// are used for multiword operations if the `"simd"` feature is enabled.
 ///
 /// As of Rust 1.27.2, code generation for AVX on the default ABI results in
 /// the generation of incorrect code. Because of this, `galois_2p8` only uses

@@ -91,7 +91,7 @@
 //! according to the field properties. For example, `a * b == (a_1 + a_2) * b
 //! == a_1 * b + a_2 * b`, where a_1 represents the upper bits of `a` and `a_2`
 //! represents the lower bits of `a`. As a result, the required storage space
-//! is reduced by a factor of `2 ^ (log(a) - 1)`. For primitive polynomials,
+//! is reduced by a factor of `2 ^ (x - 5)`. For primitive polynomials,
 //! the operations can be performed in terms of exponentials and logarithms,
 //! which only requires two to five times as many entries as members of the
 //! field, depending on the implementation. `galois_2p8` currently uses
