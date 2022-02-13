@@ -2,7 +2,7 @@
 name = "galois_2p8"
 description = "Basic Arithmetic over all GF(2^8) fields"
 license = "MIT"
-version = "0.1.1"
+version = "0.1.2"
 
 authors = ["Daniel Sweet <danieljsweet@icloud.com>"]
 readme = "README.md"

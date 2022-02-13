@@ -1,10 +1,22 @@
 # Changelog
 
+## [0.1.2] - 2022-02-13
+
+Corrects a buffer overflow in `PrimitivePolynomialField::new`. Please update
+immediately!
+
+### Fixed
+
+- `PrimitivePolynomialField::new` no longer writes one byte past its allocated
+  `vec` (thanks to @thejohncrafter for finding and fixing the issue).
+
 ## [0.1.1] - 2018-11-28
+
 Documentation fix only: functionality is identical
 to the 0.1.0 release.
 
 ### Fixed
+
 - `galois_2p8` documentation:
   - changed line: "is reduced by a factor of `2^(log(a) - 1)`" to
     "is reduced by a factor of `2^(x - 5)`" for space savings arising
@@ -16,9 +28,11 @@ to the 0.1.0 release.
   - Added monospace formatting to `"simd"` feature.
 
 ## [0.1.0] - 2018-11-27
+
 Initial release.
 
 ### Added
+
 - Enumeration `IrreducablePolynomial` containing all
   valid irreducable polynomials for `GF(2^8)`
 - Arithmetic implementations for both general `GF(2^8)`
