@@ -1007,12 +1007,8 @@ impl PrimitivePolynomialField {
         if !poly.is_primitive() {
             return None;
         }
-        let mut exp_table = Vec::with_capacity(510);
-        let mut log_table = Vec::with_capacity(255);
-        unsafe {
-            exp_table.set_len(510);
-            log_table.set_len(256);
-        }
+        let mut exp_table = vec![0; 510];
+        let mut log_table = vec![0; 256];
         let mut member = 1;
         for x in 0..255 {
             exp_table[x] = member;
